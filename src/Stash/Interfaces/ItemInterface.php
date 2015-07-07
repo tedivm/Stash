@@ -11,17 +11,10 @@
 
 namespace Stash\Interfaces;
 
-interface ItemInterface
-{
-    /**
-     * Sets the Parent Pool for the Item class to use.
-     *
-     * Typically called by Pool directly, and *must* be called before running caching functions.
-     *
-     * @param PoolInterface $driver
-     */
-    public function setPool(PoolInterface $driver);
+use Psr\Log\LoggerAwareInterface;
 
+interface ItemInterface extends LoggerAwareInterface, HasCachePoolInterface
+{
     /**
      * Takes and sets the key and namespace.
      *
@@ -112,14 +105,6 @@ interface ItemInterface
      * @return bool True if caching is disabled.
      */
     public function isDisabled();
-
-    /**
-     * Sets a PSR\Logger style logging client to enable the tracking of errors.
-     *
-     * @param  \PSR\Log\LoggerInterface $logger
-     * @return bool
-     */
-    public function setLogger($logger);
 
     /**
      * Returns the record's creation time or false if it isn't set
