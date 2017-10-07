@@ -51,6 +51,12 @@ interface ItemInterface extends CacheItemInterface
     public function getKey();
 
     /**
+     * returns the real array key
+     * @return array
+     */
+    public function getCacheKey();
+
+    /**
      * Clears the current Item. If hierarchical or "stackable" caching is being
      * used this function will also remove children Items.
      *
@@ -101,6 +107,17 @@ interface ItemInterface extends CacheItemInterface
      * @return self
      */
     public function set($value);
+
+    /**
+     * Adds an ItemInterface as dependency. If the added
+     * item gets invalidated, the caller also gets invalidated.
+     * If $inherit is true, hierarchical dependencies are enabled.
+     *
+     * @param ItemInterface $dep
+     * @param boolean $inherit if dependencies should be inherited
+     * @return boolean
+     */
+    public function addDependency(ItemInterface $dep, $inherit = true);
 
     /**
      * Extends the expiration on the current cached item. For some engines this
@@ -155,6 +172,15 @@ interface ItemInterface extends CacheItemInterface
     * @return self
     */
     public function expiresAt($expiration);
+
+    /**
+     * Sets the Collection for this Item. If this is called,
+     * than the cache item is part of a Pool::getItems call.
+     * The collection performed a multi request. The item
+     * now can retrieve the individual data
+     * @param CollectionInterface $collection
+     */
+    public function setResultCollection(CollectionInterface $collection);
 
     /**
     * Sets the expiration based off a an integer, date interval, or date

@@ -15,6 +15,7 @@ use Stash\Exception\Exception;
 use Stash\Exception\InvalidArgumentException;
 use Stash\Interfaces\DriverInterface;
 use Stash\Interfaces\ItemInterface;
+use Stash\Interfaces\CollectionInterface;
 use Stash\Interfaces\PoolInterface;
 
 /**
@@ -67,7 +68,7 @@ class Item implements ItemInterface
     protected $invalidationMethod = Invalidation::PRECOMPUTE;
     protected $invalidationArg1 = null;
     protected $invalidationArg2 = null;
-
+    protected $resultCollection = null;
 
 
     /**
@@ -120,6 +121,8 @@ class Item implements ItemInterface
      * @var string|null
      */
     protected $namespace = null;
+
+    protected $dependencies = [];
 
     /**
      * This is a flag to see if a valid response is returned. It is set by the getData function and is used by the
@@ -180,6 +183,14 @@ class Item implements ItemInterface
     /**
      * {@inheritdoc}
      */
+    public function getCacheKey()
+    {
+        return $this->key;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
     public function clear()
     {
         try {
@@ -196,6 +207,7 @@ class Item implements ItemInterface
     {
         unset($this->data);
         unset($this->expiration);
+        $this->dependencies = [];
 
         if ($this->isDisabled()) {
             return false;
@@ -211,10 +223,12 @@ class Item implements ItemInterface
     {
         try {
             if (!isset($this->data)) {
-                $this->data = $this->executeGet(
+                $data = $this->executeGet(
                     $this->invalidationMethod,
                     $this->invalidationArg1,
                     $this->invalidationArg2);
+                $this->data = $data["return"];
+                $this->dependencies = $this->isHit ? $data["dependencies"] : [];
             }
 
             if (false === $this->isHit) {
@@ -274,7 +288,7 @@ class Item implements ItemInterface
 
         $this->validateRecord($invalidation, $record);
 
-        return isset($record['data']['return']) ? $record['data']['return'] : null;
+        return isset($record['data']) ? $record['data'] : null;
     }
 
 
@@ -345,6 +359,57 @@ class Item implements ItemInterface
 
     /**
      * {@inheritdoc}
+     *
+     *  this implementation sees a dependency as a connection between
+     *  two items. this connection can be expressed as a key
+     *  built like follows keyDependency/keyChild.
+     *  this key is saved in the cache the same way like stampede key.
+     *  The key begins the exact same way the dependency key begins, so
+     *  that invalidating the Item will invalidate also the connection
+     */
+    public function addDependency(ItemInterface $dependency, $inherit = true)
+    {
+
+        // make a dependency key, which is basically /Dependency/This
+        $dependencyKey = array_merge($dependency->key, $this->key);
+        if ($inherit) {
+            // ensure we fetched data so that dependencies are populated
+            $dependency->get();
+            $dependencyKeys = array_merge([$dependencyKey], $dependency->dependencies);
+        } else {
+            $dependencyKeys = [$dependencyKey];
+        }
+
+        // store the newly created dependency key
+        $saved = $this->driver->storeData($dependencyKey, true, time() + static::$cacheTime);
+        
+        if ($saved) {
+            // store all dependencies, they need to be validated
+            $this->dependencies = array_unique(array_merge($this->dependencies, $dependencyKeys), SORT_REGULAR);
+        }
+
+        return $saved;
+    }
+
+    /**
+     * Fetches Dependency Keys. If the count of
+     * retreived items is the same as the length of the defined
+     * dependencies, all dependencies are still valid
+     * @param  array $record
+     * @return boolean
+     */
+    protected function validateDependencies($record)
+    {
+        if (empty($record["data"]["dependencies"])) {
+            return true;
+        }
+        $depKeys = $record["data"]["dependencies"];
+        $deps = $this->driver->getMany($depKeys);
+        return count($depKeys) === count($deps);
+    }
+
+    /**
+     * {@inheritdoc}
      */
     public function setTTL($ttl = null)
     {
@@ -403,7 +468,7 @@ class Item implements ItemInterface
     public function save()
     {
         try {
-            return $this->executeSet($this->data, $this->expiration);
+            return $this->executeSet($this->data, $this->dependencies, $this->expiration);
         } catch (Exception $e) {
             $this->logException('Setting value in cache caused exception.', $e);
             $this->disable();
@@ -412,7 +477,7 @@ class Item implements ItemInterface
         }
     }
 
-    private function executeSet($data, $time)
+    private function executeSet($data, $dependencies, $time)
     {
         if ($this->isDisabled() || !isset($this->key)) {
             return false;
@@ -420,6 +485,7 @@ class Item implements ItemInterface
 
         $store = array();
         $store['return'] = $data;
+        $store['dependencies'] = $dependencies;
         $store['createdOn'] = time();
 
         if (isset($time) && (($time instanceof \DateTime) || ($time instanceof \DateTimeInterface))) {
@@ -525,6 +591,11 @@ class Item implements ItemInterface
      */
     protected function getRecord()
     {
+        $collection = $this->resultCollection;
+        if (null !== $collection) {
+            return $this->resultCollection->getRecord($this);
+        }
+
         $record = $this->driver->getData($this->key);
 
         if (!is_array($record)) {
@@ -561,8 +632,9 @@ class Item implements ItemInterface
         }
 
         $curTime = microtime(true);
+        $validExpiry = isset($record['expiration']) && ($ttl = $record['expiration'] - $curTime) > 0;
 
-        if (isset($record['expiration']) && ($ttl = $record['expiration'] - $curTime) > 0) {
+        if ($validExpiry && $this->validateDependencies($record)) {
             $this->isHit = true;
 
             if ($invalidation == Invalidation::PRECOMPUTE) {
@@ -614,7 +686,8 @@ class Item implements ItemInterface
                 }
 
                 usleep($ptime);
-                $record['data']['return'] = $this->executeGet(Invalidation::SLEEP, $time, $attempts - 1);
+                $data = $this->executeGet(Invalidation::SLEEP, $time, $attempts - 1);
+                $record['data']['return'] = $data['return'];
                 break;
 
             case Invalidation::OLD:
@@ -672,5 +745,17 @@ class Item implements ItemInterface
             $spkey[0] = 'sp';
             $this->driver->clear($spkey);
         }
+    }
+
+    /**
+     * @param mixed $resultCollection
+     *
+     * @return self
+     */
+    public function setResultCollection(CollectionInterface $resultCollection)
+    {
+        $this->resultCollection = $resultCollection;
+
+        return $this;
     }
 }

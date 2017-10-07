@@ -39,6 +39,17 @@ abstract class AbstractDriver implements DriverInterface
         $this->setOptions($options);
     }
 
+    public function getMany($keys)
+    {
+        return array_filter(array_map(function ($key) {
+            $result = $this->getData($key);
+            if (isset($result['data'])) {
+                $result['key'] = $key;
+            }
+            return $result;
+        }, $keys));
+    }
+
     /**
      * @return array
      */

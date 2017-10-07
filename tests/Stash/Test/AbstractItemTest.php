@@ -558,6 +558,58 @@ abstract class AbstractItemTest extends \PHPUnit_Framework_TestCase
         Item::$runtimeDisable = false;
     }
 
+    public function testDependencies()
+    {
+        $pool = new \Stash\Pool();
+        $pool->setDriver(new Ephemeral());
+
+        $bar = $pool->getItem("model/bar");
+        $bar->set(["barModel1"]);
+
+        $foo = $pool->getItem("model/foo");
+        $foo->set("fooModel1");
+
+        $baz = $pool->getItem("model/baz");
+        $baz->set("bazModel1");
+        $baz->save();
+        
+        $foo->addDependency($baz);
+        $bar->addDependency($foo);
+
+        $foo->save();
+        $bar->save();
+
+        $this->assertTrue($pool->getItem("model/bar")->isHit());
+        $this->assertTrue($pool->getItem("model/foo")->isHit());
+
+        $foo->clear();
+
+        $this->assertFalse($pool->getItem("model/bar")->isHit());
+        $this->assertFalse($pool->getItem("model/foo")->isHit());
+
+        $this->assertTrue($pool->getItem("model/baz")->isHit());
+
+        $foo = $pool->getItem("model/foo");
+        $foo->set("fooModel2");
+        $foo->addDependency($baz);
+        $foo->save();
+
+        $bar = $pool->getItem("model/bar");
+        $bar->set("barModel2");
+        $bar->addDependency($foo);
+        $bar->save();
+
+        $this->assertTrue($pool->getItem("model/baz")->isHit());
+        $this->assertTrue($pool->getItem("model/bar")->isHit());
+        $this->assertTrue($pool->getItem("model/foo")->isHit());
+
+        $baz->clear();
+
+        $this->assertFalse($pool->getItem("model/bar")->isHit());
+        $this->assertFalse($pool->getItem("model/foo")->isHit());
+        $this->assertFalse($pool->getItem("model/baz")->isHit());
+    }
+
     private function getMockedDriver()
     {
         return new \Stash\Test\Stubs\DriverCallCheckStub();
