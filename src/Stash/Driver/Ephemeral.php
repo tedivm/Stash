@@ -29,11 +29,35 @@ class Ephemeral extends AbstractDriver
      */
     protected $store = array();
 
+    /**
+     * Maximum number of items to cache
+     *
+     * @var int
+     */
     protected $maxItems = 0;
+
+    /**
+     * Limit by memory utilized by PHP
+     *
+     * @var int
+     */
+    protected $memoryLimit = 0;
+
+    /**
+     * How aggressive to perform eviction in case of memory limit violation.
+     * Should be positive float less than 1.
+     *
+     * @var float
+     */
+    private $memoryLimitEvictionFactor;
 
     public function getDefaultOptions()
     {
-        return ['maxItems' => 0];
+        return [
+            'maxItems' => 0,
+            'memoryLimit' => 0,
+            'memoryLimitEvictionFactor' => 0.25,
+        ];
     }
 
     /**
@@ -46,17 +70,12 @@ class Ephemeral extends AbstractDriver
     {
         $options += $this->getDefaultOptions();
 
-        if (array_key_exists('maxItems', $options)) {
-            $maxItems = $options['maxItems'];
-            if (!is_int($maxItems) || $maxItems < 0) {
-                throw new Stash\Exception\InvalidArgumentException(
-                  'maxItems must be a positive integer.'
-                );
-            }
-            $this->maxItems = $maxItems;
-            if ($this->maxItems > 0 && count($this->store) > $this->maxItems) {
-                $this->evict(count($this->store) - $this->maxItems);
-            }
+        $this->maxItems = self::positiveIntegerOption($options, 'maxItems');
+        $this->memoryLimit = self::positiveIntegerOption($options, 'memoryLimit');
+        $this->memoryLimitEvictionFactor = self::factorOption($options, 'memoryLimitEvictionFactor');
+
+        if ($this->maxItems > 0 && count($this->store) > $this->maxItems) {
+            $this->evict(count($this->store) - $this->maxItems);
         }
     }
 
@@ -113,6 +132,17 @@ class Ephemeral extends AbstractDriver
 
         $this->store[$this->getKeyIndex($key)] = array('data' => $data, 'expiration' => $expiration);
 
+        if ($this->memoryLimit > 0) {
+            while (count($this->store) && memory_get_usage() > $this->memoryLimit) {
+                $offset = max(
+                    ceil(count($this->store) * $this->memoryLimitEvictionFactor),
+                    1
+                );
+
+                $this->store = array_slice($this->store, $offset, null, true);
+            }
+        }
+
         return true;
     }
 
@@ -148,5 +178,43 @@ class Ephemeral extends AbstractDriver
         }
 
         return true;
+    }
+
+    /**
+     * @param array $options
+     * @param string $optionName
+     * @return int
+     * @throws Stash\Exception\InvalidArgumentException
+     */
+    protected static function positiveIntegerOption(array $options, $optionName)
+    {
+        $optionValue = $options[$optionName];
+
+        if (!is_int($optionValue) || $optionValue < 0) {
+            throw new Stash\Exception\InvalidArgumentException(
+                $optionName . ' must be a positive integer.'
+            );
+        }
+
+        return $optionValue;
+    }
+
+    /**
+     * @param array $options
+     * @param string $optionName
+     * @return int
+     * @throws Stash\Exception\InvalidArgumentException
+     */
+    protected static function factorOption(array $options, $optionName)
+    {
+        $optionValue = $options[$optionName];
+
+        if (!is_float($optionValue) || $optionValue < 0 || $optionValue > 1) {
+            throw new Stash\Exception\InvalidArgumentException(
+                $optionName . ' must be a factor 0..1'
+            );
+        }
+
+        return $optionValue;
     }
 }

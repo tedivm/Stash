@@ -99,15 +99,15 @@ class EphemeralTest extends AbstractDriverTest
         $expire = time() + 100;
         $driver->storeData(['fred'], 'tuttle', $expire);
         $this->assertArraySubset(
-          ['data' => 'tuttle', 'expiration' => $expire],
-          $driver->getData(['fred'])
+            ['data' => 'tuttle', 'expiration' => $expire],
+            $driver->getData(['fred'])
         );
 
         $driver->storeData(['foo'], 'bar', $expire);
         $this->assertFalse($driver->getData(['fred']));
         $this->assertArraySubset(
-          ['data' => 'bar', 'expiration' => $expire],
-          $driver->getData(['foo'])
+            ['data' => 'bar', 'expiration' => $expire],
+            $driver->getData(['foo'])
         );
     }
 
@@ -125,9 +125,81 @@ class EphemeralTest extends AbstractDriverTest
 
         for ($i = 1; $i <= 5; ++$i) {
             $this->assertArraySubset(
-              ['data' => "value$i", 'expiration' => $expire],
-              $driver->getData(["item$i"])
+                ['data' => "value$i", 'expiration' => $expire],
+                $driver->getData(["item$i"])
             );
         }
+    }
+
+    public function testMemoryLimitCanBeSet()
+    {
+        $usedMemory = memory_get_usage(true);
+
+        /**
+         * @var \Stash\Driver\Ephemeral
+         */
+        $driver = new $this->driverClass([
+            'memoryLimit' => $usedMemory + 1024
+        ]);
+
+        $expire = time() + 100;
+        $driver->storeData(['hello'], 'world', $expire);
+        $this->assertNotFalse($driver->getData(['hello']));
+    }
+
+    /**
+     * @expectedException \Stash\Exception\InvalidArgumentException
+     */
+    public function testSettingInvalidMemoryLimitThrows()
+    {
+        new $this->driverClass([
+            'memoryLimit' => 'nonsense',
+        ]);
+    }
+
+    /**
+     * @expectedException \Stash\Exception\InvalidArgumentException
+     */
+    public function testSettingInvalidMemoryLimitEvictionFactorThrows()
+    {
+        new $this->driverClass([
+            'memoryLimitEvictionFactor' => 98,
+        ]);
+    }
+
+    public function testEvictionCausedByMemoryLimit()
+    {
+        $expire = time() + 100;
+
+        $cacheObjects = static function ($driver, $count) use ($expire) {
+            $anObject = (object)['foo' => PHP_INT_MAX, 'theAnswer' => 42];
+
+            for ($i = 1; $i <= $count ; $i++) {
+                $driver->storeData(['key' . $i], clone $anObject, $expire);
+            }
+        };
+
+        $neededMemory = (function () use ($cacheObjects) {
+            $memoryUsage = memory_get_usage();
+
+            $driver = new $this->driverClass();
+            $cacheObjects($driver, 100);
+
+            return memory_get_usage() - $memoryUsage;
+        })();
+
+        /**
+         * @var \Stash\Driver\Ephemeral
+         */
+        $driver = new $this->driverClass([
+            'memoryLimit' => memory_get_usage() + $neededMemory
+        ]);
+        $cacheObjects($driver, 100);
+
+        $driver->storeData(['extra'], ['hello!'], $expire);
+
+        $this->assertFalse($driver->getData(['key1'])); // evicted
+        $this->assertFalse($driver->getData(['key20'])); // evicted
+        $this->assertSame(42, $driver->getData(['key98'])['data']->theAnswer);
     }
 }
