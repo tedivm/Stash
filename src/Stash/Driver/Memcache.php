@@ -68,13 +68,15 @@ class Memcache extends AbstractDriver
      * * servers - An array of servers, with each server represented by its own array (array(host, port, [weight])). If
      * not passed the default is array('127.0.0.1', 11211).
      *
-     * * extension - Which php extension to use, either 'memcache' or 'memcache'. Defaults to memcache with memcache
+     * * extension - Which php extension to use, either 'memcache' or 'memcached'. Defaults to 'memcached' with 'memcache'
      * as a fallback.
      *
-     * * Options can be passed to the "memcache" driver by adding them to the options array. The memcache extension
-     * defined options using constants, ie Memcached::OPT_*. By passing in the * portion ('compression' for
+     * * persistent_id - If set this ID is used to set persistence of the memcached extension
+     *
+     * * Options can be passed to the memcached driver by adding them to the options array. The memcached extension
+     * defined options using constants, ie Memcached::OPT_*. Pass in the * portion (COMPRESSION for
      * Memcached::OPT_COMPRESSION) and its respective option. Please see the php manual for the specific options
-     * (http://us2.php.net/manual/en/memcache.constants.php)
+     * (http://php.net/manual/en/memcached.constants.php)
      *
      *
      * @param array $options
@@ -99,7 +101,8 @@ class Memcache extends AbstractDriver
         $extension = strtolower($options['extension']);
 
         if (class_exists('Memcached', false) && $extension != 'memcache') {
-            $this->memcache = new SubMemcached($servers, $options);
+            $persistent_id = isset($options['persistent_id'])?$options['persistent_id']:null;
+            $this->memcache = new SubMemcached($persistent_id, $servers, $options);
         } elseif (class_exists('Memcache', false) && $extension != 'memcached') {
             $this->memcache = new SubMemcache($servers);
         } else {
